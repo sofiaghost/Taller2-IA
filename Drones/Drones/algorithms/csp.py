@@ -119,18 +119,15 @@ def backtracking_fc(csp: DroneAssignmentCSP) -> dict[str, str] | None:
     return backtrack({})
 
 def revise(csp, Xi, Xj):
-
     revised = False
 
     for x in csp.domains[Xi][:]:
-
         supported = False
 
         for y in csp.domains[Xj]:
+            partial_assignment = {Xj: y}
 
-            test_assignment = {Xi: x, Xj: y}
-
-            if csp.is_consistent(Xi, x, test_assignment):
+            if csp.is_consistent(Xi, x, partial_assignment):
                 supported = True
                 break
 
@@ -141,7 +138,6 @@ def revise(csp, Xi, Xj):
     return revised
 
 def ac3(csp, queue=None):
-
     if queue is None:
         queue = deque(
             (Xi, Xj)
@@ -181,16 +177,13 @@ def backtracking_ac3(csp: DroneAssignmentCSP) -> dict[str, str] | None:
       - a backtrack function that integrates AC-3 into the search process.
     """
     def backtrack(assignment):
-
         if csp.is_complete(assignment):
             return assignment
 
         var = csp.get_unassigned_variables(assignment)[0]
 
         for value in csp.domains[var][:]:
-
             if csp.is_consistent(var, value, assignment):
-
                 saved_domains = {v: csp.domains[v][:] for v in csp.domains}
 
                 csp.assign(var, value, assignment)
@@ -209,7 +202,6 @@ def backtracking_ac3(csp: DroneAssignmentCSP) -> dict[str, str] | None:
         return None
 
     return backtrack({})
-
 
 
 def select_unassigned_variable(csp, assignment):
@@ -295,3 +287,177 @@ def backtracking_mrv_lcv(csp: DroneAssignmentCSP) -> dict[str, str] | None:
         return None
 
     return backtrack({})
+
+
+
+
+
+## PROMTS
+# VERSION INICIAL:
+# Esta fue una primera implementación funcional de AC3 integrada con backtracking.
+# La idea era:
+# - aplicar AC3 globalmente antes de comenzar,
+# - fijar el dominio de la variable asignada al valor escogido,
+# - volver a propagar consistencia de arcos en vecinos cercanos,
+# - restaurar dominios en backtracking.
+#
+# Sin embargo, esta versión resultó demasiado agresiva en algunos layouts y
+# eliminaba valores válidos en ciertos casos, por lo que luego se refinó.
+"""
+
+
+def backtracking_mrv_lcv(csp: DroneAssignmentCSP) -> dict[str, str] | None:
+
+    def forward_check(var, assignment, removed):
+        for neighbor in csp.get_neighbors(var):
+            if neighbor in assignment:
+                continue
+
+            for val in csp.domains[neighbor][:]:
+                if not csp.is_consistent(neighbor, val, assignment):
+                    csp.domains[neighbor].remove(val)
+                    removed.append((neighbor, val))
+
+                    if not csp.domains[neighbor]:
+                        return False
+
+        return True
+
+    def restore(removed):
+        for var, val in removed:
+            csp.domains[var].append(val)
+
+    def select_unassigned_variable(assignment):
+        unassigned = csp.get_unassigned_variables(assignment)
+        return min(unassigned, key=lambda var: len(csp.domains[var]))
+
+    def order_domain_values(var, assignment):
+        return sorted(
+            csp.domains[var],
+            key=lambda value: csp.get_num_conflicts(var, value, assignment)
+        )
+
+    def backtrack(assignment):
+        if csp.is_complete(assignment):
+            return assignment
+
+        var = select_unassigned_variable(assignment)
+
+        for value in order_domain_values(var, assignment):
+            if csp.is_consistent(var, value, assignment):
+                csp.assign(var, value, assignment)
+
+                removed = []
+
+                if forward_check(var, assignment, removed):
+                    result = backtrack(assignment)
+                    if result is not None:
+                        return result
+
+                restore(removed)
+                csp.unassign(var, assignment)
+
+        return None
+
+    return backtrack({})
+"""
+
+
+# PROMPT USADO PARA REFINAR backtracking_ac3:
+# "Tengo implementado backtracking, forward checking y una primera versión de AC3
+# para un CSP de asignación de drones. Mi backtracking y forward checking funcionan,
+# pero AC3 falla en algunos layouts donde los otros sí encuentran solución.
+# 
+# Este es mi código actual de revise, ac3 y backtracking_ac3. Ayúdame a:
+# 1) detectar posibles errores de lógica,
+# 2) hacer la implementación más robusta,
+# 3) restaurar correctamente los dominios al hacer backtrack,
+# 4) mantener el estilo simple y entendible, sin cambiar la interfaz de las funciones.
+# 
+# Quiero una versión corregida y una explicación breve de qué se estaba haciendo mal."
+
+"""
+versión inicial 
+
+def revise(csp, Xi, Xj):
+    revised = False
+
+    for x in csp.domains[Xi][:]:
+        supported = False
+
+        for y in csp.domains[Xj]:
+            # Primer intento: verificar compatibilidad local de forma simple
+            if csp.is_consistent(Xi, x, {Xj: y}):
+                supported = True
+                break
+
+        if not supported:
+            csp.domains[Xi].remove(x)
+            revised = True
+
+    return revised
+
+
+def ac3(csp, queue=None):
+    from collections import deque
+
+    if queue is None:
+        queue = deque(
+            (Xi, Xj)
+            for Xi in csp.variables
+            for Xj in csp.get_neighbors(Xi)
+        )
+    else:
+        queue = deque(queue)
+
+    while queue:
+        Xi, Xj = queue.popleft()
+
+        if revise(csp, Xi, Xj):
+            if not csp.domains[Xi]:
+                return False
+
+            for Xk in csp.get_neighbors(Xi):
+                if Xk != Xj:
+                    queue.append((Xk, Xi))
+
+    return True
+
+
+def backtracking_ac3(csp: DroneAssignmentCSP) -> dict[str, str] | None:
+    # Primera versión: AC3 global + AC3 después de cada asignación
+
+    if not ac3(csp):
+        return None
+
+    def backtrack(assignment):
+        if csp.is_complete(assignment):
+            return assignment
+
+        var = csp.get_unassigned_variables(assignment)[0]
+
+        for value in csp.domains[var][:]:
+            if csp.is_consistent(var, value, assignment):
+                saved_domains = {v: csp.domains[v][:] for v in csp.domains}
+
+                csp.assign(var, value, assignment)
+                csp.domains[var] = [value]
+
+                queue = [(neighbor, var) for neighbor in csp.get_neighbors(var)]
+
+                if ac3(csp, queue):
+                    result = backtrack(assignment)
+                    if result is not None:
+                        return result
+
+                csp.domains = saved_domains
+                csp.unassign(var, assignment)
+
+        return None
+
+    return backtrack({})
+"""
+
+
+
+
