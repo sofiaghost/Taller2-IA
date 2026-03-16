@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING
 from abc import ABC, abstractmethod
@@ -19,79 +20,200 @@ class MultiAgentSearchAgent(Agent, ABC):
     def __init__(self, depth: str = "2", _index: int = 0, prob: str = "0.0") -> None:
         self.index = 0  # Drone is always agent 0
         self.depth = int(depth)
-        self.prob = float(
-            prob
-        )  # Probability that each hunter acts randomly (0=greedy, 1=random)
+        self.prob = float(prob)
         self.evaluation_function = evaluation.evaluation_function
 
     @abstractmethod
     def get_action(self, state: GameState) -> Directions | None:
-        """
-        Returns the best action for the drone from the current GameState.
-        """
         pass
 
 
 class RandomAgent(MultiAgentSearchAgent):
-    """
-    Agent that chooses a legal action uniformly at random.
-    """
+    """Agent that chooses a legal action uniformly at random."""
 
     def get_action(self, state: GameState) -> Directions | None:
-        """
-        Get a random legal action for the drone.
-        """
         legal_actions = state.get_legal_actions(self.index)
         return random.choice(legal_actions) if legal_actions else None
 
 
 class MinimaxAgent(MultiAgentSearchAgent):
     """
-    Minimax agent for the drone (MAX) vs hunters (MIN) game.
+    Minimax agent: drone = MAX, hunters = MIN.
+    La profundidad se decrementa cada vez que el turno vuelve al dron.
     """
 
     def get_action(self, state: GameState) -> Directions | None:
         """
-        Returns the best action for the drone using minimax.
-
-        Tips:
-        - The game tree alternates: drone (MAX) -> hunter1 (MIN) -> hunter2 (MIN) -> ... -> drone (MAX) -> ...
-        - Use self.depth to control the search depth. depth=1 means the drone moves once and each hunter moves once.
-        - Use state.get_legal_actions(agent_index) to get legal actions for a specific agent.
-        - Use state.generate_successor(agent_index, action) to get the successor state after an action.
-        - Use state.is_win() and state.is_lose() to check terminal states.
-        - Use state.get_num_agents() to get the total number of agents.
-        - Use self.evaluation_function(state) to evaluate leaf/terminal states.
-        - The next agent is (agent_index + 1) % num_agents. Depth decreases after all agents have moved (full ply).
-        - Return the ACTION (not the value) that maximizes the minimax value for the drone.
+        Retorna la mejor acción para el dron usando Minimax.
+        Itera sobre las acciones legales del dron (agent 0), evalúa cada
+        sucesor iniciando el turno del primer cazador, y devuelve la acción
+        de mayor valor.
         """
-        # TODO: Implement your code here
-        return None
+        best_action = None
+        best_value = -math.inf
+
+        for action in state.get_legal_actions(0):
+            successor = state.generate_successor(0, action)
+            # Primer cazador actúa después del dron
+            value = self._minimax(successor, agent_index=1, depth=self.depth)
+            if value > best_value:
+                best_value = value
+                best_action = action
+
+        return best_action
+
+    def _minimax(self, state: GameState, agent_index: int, depth: int) -> float:
+        """
+        Función recursiva de Minimax.
+
+        Args:
+            state:       Estado actual del juego.
+            agent_index: Índice del agente que actúa (0 = dron, ≥1 = cazador).
+            depth:       Profundidad restante (se decrementa al volver a MAX).
+
+        Returns:
+            Valor heurístico o de utilidad del estado.
+        """
+        # --- Estados terminales ---
+        if state.is_win() or state.is_lose():
+            return self.evaluation_function(state)
+
+        # --- Límite de profundidad (solo al inicio de turno del dron) ---
+        if agent_index == 0 and depth == 0:
+            return self.evaluation_function(state)
+
+        if agent_index == 0:
+            return self._max_value(state, depth)
+        else:
+            return self._min_value(state, agent_index, depth)
+
+    def _max_value(self, state: GameState, depth: int) -> float:
+        """Nodo MAX: el dron maximiza el valor."""
+        value = -math.inf
+        for action in state.get_legal_actions(0):
+            successor = state.generate_successor(0, action)
+            value = max(value, self._minimax(successor, agent_index=1, depth=depth))
+        # Si no hay acciones legales, evaluar directamente
+        if value == -math.inf:
+            return self.evaluation_function(state)
+        return value
+
+    def _min_value(self, state: GameState, agent_index: int, depth: int) -> float:
+        """
+        Nodo MIN: el cazador minimiza el valor.
+        Si es el último cazador, el siguiente turno es del dron y la
+        profundidad se decrementa.
+        """
+        num_agents = state.get_num_agents()
+        next_agent = (agent_index + 1) % num_agents
+        next_depth = depth - 1 if next_agent == 0 else depth
+
+        value = math.inf
+        for action in state.get_legal_actions(agent_index):
+            successor = state.generate_successor(agent_index, action)
+            value = min(value, self._minimax(successor, agent_index=next_agent, depth=next_depth))
+
+        # Si no hay acciones legales, evaluar directamente
+        if value == math.inf:
+            return self.evaluation_function(state)
+        return value
 
 
 class AlphaBetaAgent(MultiAgentSearchAgent):
     """
-    Alpha-Beta pruning agent. Same as Minimax but with alpha-beta pruning.
-    MAX node: prune when value > beta (strict).
-    MIN node: prune when value < alpha (strict).
+    Alpha-Beta pruning agent. Misma lógica que Minimax con poda.
+    MAX: poda estricta cuando value > beta.
+    MIN: poda estricta cuando value < alpha.
     """
 
     def get_action(self, state: GameState) -> Directions | None:
         """
-        Returns the best action for the drone using alpha-beta pruning.
-
-        Tips:
-        - Same structure as MinimaxAgent, but with alpha-beta pruning.
-        - Alpha: best value MAX can guarantee (initially -inf).
-        - Beta: best value MIN can guarantee (initially +inf).
-        - MAX node: prune when value > beta (strict inequality, do NOT prune on equality).
-        - MIN node: prune when value < alpha (strict inequality, do NOT prune on equality).
-        - Update alpha at MAX nodes: alpha = max(alpha, value).
-        - Update beta at MIN nodes: beta = min(beta, value).
-        - Pass alpha and beta through the recursive calls.
+        Retorna la mejor acción para el dron usando poda Alfa-Beta.
         """
-        # TODO: Implement your code here (BONUS)
-        return None
+        best_action = None
+        best_value = -math.inf
+        alpha = -math.inf
+        beta = math.inf
+
+        for action in state.get_legal_actions(0):
+            successor = state.generate_successor(0, action)
+            value = self._alphabeta(
+                successor, agent_index=1, depth=self.depth, alpha=alpha, beta=beta
+            )
+            if value > best_value:
+                best_value = value
+                best_action = action
+            alpha = max(alpha, best_value)
+
+        return best_action
+
+    def _alphabeta(
+        self, state: GameState, agent_index: int, depth: int, alpha: float, beta: float
+    ) -> float:
+        """
+        Función recursiva de Alfa-Beta.
+
+        Args:
+            state:       Estado actual.
+            agent_index: Agente que actúa.
+            depth:       Profundidad restante.
+            alpha:       Mejor garantía para MAX (−∞ al inicio).
+            beta:        Mejor garantía para MIN (+∞ al inicio).
+        """
+        if state.is_win() or state.is_lose():
+            return self.evaluation_function(state)
+
+        if agent_index == 0 and depth == 0:
+            return self.evaluation_function(state)
+
+        if agent_index == 0:
+            return self._ab_max_value(state, depth, alpha, beta)
+        else:
+            return self._ab_min_value(state, agent_index, depth, alpha, beta)
+
+    def _ab_max_value(
+        self, state: GameState, depth: int, alpha: float, beta: float
+    ) -> float:
+        """Nodo MAX con poda β."""
+        value = -math.inf
+        for action in state.get_legal_actions(0):
+            successor = state.generate_successor(0, action)
+            value = max(
+                value,
+                self._alphabeta(successor, agent_index=1, depth=depth, alpha=alpha, beta=beta),
+            )
+            if value > beta:          # Poda estricta
+                return value
+            alpha = max(alpha, value)
+
+        if value == -math.inf:
+            return self.evaluation_function(state)
+        return value
+
+    def _ab_min_value(
+        self, state: GameState, agent_index: int, depth: int, alpha: float, beta: float
+    ) -> float:
+        """Nodo MIN con poda α."""
+        num_agents = state.get_num_agents()
+        next_agent = (agent_index + 1) % num_agents
+        next_depth = depth - 1 if next_agent == 0 else depth
+
+        value = math.inf
+        for action in state.get_legal_actions(agent_index):
+            successor = state.generate_successor(agent_index, action)
+            value = min(
+                value,
+                self._alphabeta(
+                    successor, agent_index=next_agent, depth=next_depth, alpha=alpha, beta=beta
+                ),
+            )
+            if value < alpha:         # Poda estricta
+                return value
+            beta = min(beta, value)
+
+        if value == math.inf:
+            return self.evaluation_function(state)
+        return value
 
 
 class ExpectimaxAgent(MultiAgentSearchAgent):
@@ -146,7 +268,13 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
                 best_action = action
 
         return best_action
-        """---(optimiza el algoritmo de python e identifica partes innecesarias o ineficientes. Simplifícalo manteniendo la misma lógica del algoritmo Expectimax)---
+
+
+# ==============================================================================
+# BLOQUE DE COMENTARIOS Y REFERENCIAS EN ESPAÑOL (IGNORADOS EN LA LÓGICA ARRIBA)
+# ==============================================================================
+"""
+---(optimiza el algoritmo de python e identifica partes innecesarias o ineficientes. Simplifícalo manteniendo la misma lógica del algoritmo Expectimax)---
         def get_action(self, state: GameState) -> Directions | None:
         num_agents = state.get_num_agents()
 
@@ -218,5 +346,136 @@ class ExpectimaxAgent(MultiAgentSearchAgent):
                 best_value = value
                 best_action = action
 
-        return best_action"""
+        return best_action
 
+--- VERSIÓN SIMPLIFICADA REFERENCIADA EN CONVERSACIONES PREVIAS ---
+
+import math
+import random
+import algorithms.evaluation as evaluation
+from world.game import Agent
+class MultiAgentSearchAgent(Agent):
+def init(self, depth="2", _index=0, prob="0.0"):
+self.index = 0
+self.depth = int(depth)
+self.prob = float(prob)
+self.evaluation_function = evaluation.evaluation_function
+def get_action(self, state):
+# En lugar de un @abstractmethod, simplemente usaría un pass o raise
+pass
+class RandomAgent(MultiAgentSearchAgent):
+def get_action(self, state):
+acciones = state.get_legal_actions(self.index)
+if len(acciones) > 0:
+return random.choice(acciones)
+return None
+class MinimaxAgent(MultiAgentSearchAgent):
+def get_action(self, state):
+mejor_accion = None
+mejor_valor = -math.inf
+for accion in state.get_legal_actions(0):
+sucesor = state.generate_successor(0, accion)
+valor = self.minimax(sucesor, 1, self.depth)
+if valor > mejor_valor:
+mejor_valor = valor
+mejor_accion = accion
+return mejor_accion
+def minimax(self, state, agent_index, depth):
+# Casos base
+if state.is_win() or state.is_lose() or (agent_index == 0 and depth == 0):
+return self.evaluation_function(state)
+# Turno del Dron (MAX)
+if agent_index == 0:
+valor = -math.inf
+acciones = state.get_legal_actions(0)
+if not acciones:
+return self.evaluation_function(state)
+for accion in acciones:
+sucesor = state.generate_successor(0, accion)
+valor = max(valor, self.minimax(sucesor, 1, depth))
+return valor
+# Turno de los Cazadores (MIN)
+else:
+# Lógica manual para calcular el siguiente turno
+siguiente_agente = agent_index + 1
+siguiente_profundidad = depth
+if siguiente_agente == state.get_num_agents():
+siguiente_agente = 0
+siguiente_profundidad -= 1
+valor = math.inf
+acciones = state.get_legal_actions(agent_index)
+if not acciones:
+return self.evaluation_function(state)
+for accion in acciones:
+sucesor = state.generate_successor(agent_index, accion)
+valor = min(valor, self.minimax(sucesor, siguiente_agente, siguiente_profundidad))
+return valor
+class AlphaBetaAgent(MultiAgentSearchAgent):
+def get_action(self, state):
+mejor_accion = None
+mejor_valor = -math.inf
+alfa = -math.inf
+beta = math.inf
+for accion in state.get_legal_actions(0):
+sucesor = state.generate_successor(0, accion)
+valor = self.alfa_beta(sucesor, 1, self.depth, alfa, beta)
+if valor > mejor_valor:
+mejor_valor = valor
+mejor_accion = accion
+alfa = max(alfa, mejor_valor)
+return mejor_accion
+def alfa_beta(self, state, agent_index, depth, alfa, beta):
+if state.is_win() or state.is_lose() or (agent_index == 0 and depth == 0):
+return self.evaluation_function(state)
+# Turno MAX
+if agent_index == 0:
+valor = -math.inf
+acciones = state.get_legal_actions(0)
+if not acciones: return self.evaluation_function(state)
+for accion in acciones:
+sucesor = state.generate_successor(0, accion)
+valor = max(valor, self.alfa_beta(sucesor, 1, depth, alfa, beta))
+if valor > beta:
+return valor
+alfa = max(alfa, valor)
+return valor
+# Turno MIN
+else:
+siguiente_agente = agent_index + 1
+siguiente_profundidad = depth
+if siguiente_agente == state.get_num_agents():
+siguiente_agente = 0
+siguiente_profundidad -= 1
+valor = math.inf
+acciones = state.get_legal_actions(agent_index)
+if not acciones: return self.evaluation_function(state)
+for accion in acciones:
+sucesor = state.generate_successor(agent_index, accion)
+valor = min(valor, self.alfa_beta(sucesor, siguiente_agente, siguiente_profundidad, alfa, beta))
+if valor < alfa:
+return valor
+beta = min(beta, valor)
+return valor
+class ExpectimaxAgent(MultiAgentSearchAgent):
+# ... Mismo principio: combinaría la función chance y max en un solo método ...
+pass
+
+Prompt
+
+1. Modularidad e inyección de dependencias (Clean Code):
+"Refactoriza la función gigante minimax y alfa_beta. Separa la lógica del
+jugador MAX y la del jugador MIN en métodos auxiliares privados como
+_max_value y _min_value. Esto hará que el código sea más fácil de leer."
+2. Tipado estricto (Type Hinting):
+"Añade anotaciones de tipo (type hints) de Python a todas las funciones.
+Usa cosas como -> float, state: GameState, y trae TYPE_CHECKING para
+evitar importaciones circulares. Esto ayuda al autocompletado en el IDE."
+3. Mejora de la herencia y orientación a objetos:
+"Haz que la clase base MultiAgentSearchAgent herede de ABC (Abstract
+Base Class) y usa el decorador @abstractmethod en get_action. Así
+obligamos a que cualquier clase hija implemente ese método sí o sí."
+4. Optimización de cálculos matemáticos básicos:
+"En el turno de los cazadores, estoy sumando +1 para calcular el siguiente
+agente y usando un if para reiniciar a 0. Cambia esto usando el operador
+módulo (%) para que sea más elegante (ej: (agent_index + 1) % num_agents). 
+"""
